@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
+import { checkRateLimit, getClientIp, RATE_LIMITS } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -16,6 +17,31 @@ const GOOGLE_CSE_KEY = process.env.GOOGLE_CSE_KEY;
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limiting
+    const clientIp = getClientIp(request);
+    const rateLimitResult = checkRateLimit(
+      `web-search:${clientIp}`,
+      RATE_LIMITS.WEB_SEARCH.maxRequests,
+      RATE_LIMITS.WEB_SEARCH.windowMs,
+    );
+
+    if (!rateLimitResult.success) {
+      return NextResponse.json(
+        {
+          error: "Rate limit exceeded. Please try again later.",
+          reset: new Date(rateLimitResult.reset).toISOString(),
+        },
+        {
+          status: 429,
+          headers: {
+            "X-RateLimit-Limit": String(rateLimitResult.limit),
+            "X-RateLimit-Remaining": String(rateLimitResult.remaining),
+            "X-RateLimit-Reset": String(rateLimitResult.reset),
+          },
+        },
+      );
+    }
+
     const body = await request.json().catch(() => null);
     const query =
       typeof body?.query === "string" && body.query.trim().length > 0
@@ -32,11 +58,8 @@ export async function POST(request: NextRequest) {
     if (!GOOGLE_CSE_ID || !GOOGLE_CSE_KEY) {
       console.error("Web search attempted without GOOGLE_CSE_ID/KEY");
       return NextResponse.json(
-        {
-          error:
-            "Web search is not configured. Please provide GOOGLE_CSE_ID and GOOGLE_CSE_KEY in the environment.",
-        },
-        { status: 500 },
+        { error: "Web search is currently unavailable." },
+        { status: 503 },
       );
     }
 

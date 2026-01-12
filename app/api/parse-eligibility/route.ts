@@ -4,28 +4,59 @@ import { parsePDF } from "@/lib/pdf-parser";
 import { extractEligibility } from "@/lib/eligibility-extractor";
 import { db } from "@/db";
 import { eligibilityDocuments } from "@/db/schema";
+import { checkRateLimit, getClientIp, RATE_LIMITS } from "@/lib/rate-limit";
 
 const MAX_RAW_TEXT_LENGTH = 50_000;
 const RESPONSE_SNIPPET_LENGTH = 2_000;
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
 export const runtime = "nodejs";
 
+function sanitizeFilename(filename: string): string {
+  return filename.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 255);
+}
+
 export async function POST(request: NextRequest) {
   try {
+    // Rate limiting
+    const clientIp = getClientIp(request);
+    const rateLimitResult = checkRateLimit(
+      `file-upload:${clientIp}`,
+      RATE_LIMITS.FILE_UPLOAD.maxRequests,
+      RATE_LIMITS.FILE_UPLOAD.windowMs,
+    );
+
+    if (!rateLimitResult.success) {
+      return NextResponse.json(
+        {
+          error: "Rate limit exceeded. Please try again later.",
+          reset: new Date(rateLimitResult.reset).toISOString(),
+        },
+        {
+          status: 429,
+          headers: {
+            "X-RateLimit-Limit": String(rateLimitResult.limit),
+            "X-RateLimit-Remaining": String(rateLimitResult.remaining),
+            "X-RateLimit-Reset": String(rateLimitResult.reset),
+          },
+        },
+      );
+    }
+
     const formData = await request.formData();
     const file = formData.get("file");
 
     if (!(file instanceof File)) {
       return NextResponse.json(
         { error: "A single PDF file is required." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (file.type && file.type !== "application/pdf") {
       return NextResponse.json(
         { error: "Only PDF files are supported." },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -35,7 +66,24 @@ export async function POST(request: NextRequest) {
     if (buffer.length === 0) {
       return NextResponse.json(
         { error: "Uploaded file is empty." },
-        { status: 400 }
+        { status: 400 },
+      );
+    }
+
+    // Enforce size limit
+    if (buffer.length > MAX_FILE_SIZE) {
+      return NextResponse.json(
+        { error: "File too large. Maximum size is 10MB." },
+        { status: 413 },
+      );
+    }
+
+    // Verify PDF magic number
+    const pdfHeader = buffer.slice(0, 4).toString();
+    if (pdfHeader !== "%PDF") {
+      return NextResponse.json(
+        { error: "Invalid PDF file format." },
+        { status: 400 },
       );
     }
 
@@ -43,11 +91,14 @@ export async function POST(request: NextRequest) {
 
     const { text, metadata } = await parsePDF(buffer, { cleanText: true });
 
+    // Sanitize filename for storage
+    const sanitizedFilename = sanitizeFilename(file.name);
+
     const eligibility = await extractEligibility({
       text,
       sourceType: "pdf",
       metadata: {
-        fileName: file.name,
+        fileName: sanitizedFilename,
         title: metadata?.title ?? null,
       },
     });
@@ -72,7 +123,7 @@ export async function POST(request: NextRequest) {
     const [record] = await db
       .insert(eligibilityDocuments)
       .values({
-        fileName: file.name,
+        fileName: sanitizedFilename,
         fileSize: buffer.length,
         mimeType: file.type || "application/pdf",
         rawText: truncatedRawText,

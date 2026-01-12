@@ -2,10 +2,19 @@ import { z } from "zod";
 
 export const searchFilterSchema = z.object({
   textQuery: z.string().max(200).default(""),
-  populations: z.array(z.string().trim().min(1)).default([]),
+  populations: z
+    .array(z.string().trim().min(1).max(100))
+    .max(10)
+    .default([]),
   genderRestriction: z.string().trim().min(1).nullable().optional(),
-  locations: z.array(z.string().trim().min(1)).default([]),
-  requirementsInclude: z.array(z.string().trim().min(1)).default([]),
+  locations: z
+    .array(z.string().trim().min(1).max(100))
+    .max(10)
+    .default([]),
+  requirementsInclude: z
+    .array(z.string().trim().min(1).max(100))
+    .max(10)
+    .default([]),
 });
 
 export type SearchFilter = z.infer<typeof searchFilterSchema>;
