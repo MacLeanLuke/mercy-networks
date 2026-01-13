@@ -10,6 +10,7 @@ import { db } from "@/db";
 import { eligibilityDocuments } from "@/db/schema";
 import { and, desc, ilike, or, sql } from "drizzle-orm";
 import { createServerAiProvider } from "@/lib/ai-providers";
+import { checkRateLimit, getClientIp, RATE_LIMITS } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -43,6 +44,31 @@ const partialFilterSchema = searchFilterSchema.partial();
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limiting
+    const clientIp = getClientIp(request);
+    const rateLimitResult = checkRateLimit(
+      `ai-search:${clientIp}`,
+      RATE_LIMITS.AI_SEARCH.maxRequests,
+      RATE_LIMITS.AI_SEARCH.windowMs,
+    );
+
+    if (!rateLimitResult.success) {
+      return NextResponse.json(
+        {
+          error: "Rate limit exceeded. Please try again later.",
+          reset: new Date(rateLimitResult.reset).toISOString(),
+        },
+        {
+          status: 429,
+          headers: {
+            "X-RateLimit-Limit": String(rateLimitResult.limit),
+            "X-RateLimit-Remaining": String(rateLimitResult.remaining),
+            "X-RateLimit-Reset": String(rateLimitResult.reset),
+          },
+        },
+      );
+    }
+
     const body = await request.json().catch(() => null);
     const query =
       typeof body?.query === "string" && body.query.trim().length > 0

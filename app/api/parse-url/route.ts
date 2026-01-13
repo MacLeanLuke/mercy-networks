@@ -3,6 +3,8 @@ import { load } from "cheerio";
 import { db } from "@/db";
 import { eligibilityDocuments } from "@/db/schema";
 import { extractEligibility } from "@/lib/eligibility-extractor";
+import { isAllowedUrl, fetchWithTimeout } from "@/lib/url-validator";
+import { checkRateLimit, getClientIp, RATE_LIMITS } from "@/lib/rate-limit";
 
 const MAX_PAGE_TEXT_LENGTH = 20_000;
 const RESPONSE_SNIPPET_LENGTH = 2_000;
@@ -11,6 +13,31 @@ export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
   try {
+    // Rate limiting
+    const clientIp = getClientIp(request);
+    const rateLimitResult = checkRateLimit(
+      `parse-url:${clientIp}`,
+      RATE_LIMITS.URL_PARSE.maxRequests,
+      RATE_LIMITS.URL_PARSE.windowMs,
+    );
+
+    if (!rateLimitResult.success) {
+      return NextResponse.json(
+        {
+          error: "Rate limit exceeded. Please try again later.",
+          reset: new Date(rateLimitResult.reset).toISOString(),
+        },
+        {
+          status: 429,
+          headers: {
+            "X-RateLimit-Limit": String(rateLimitResult.limit),
+            "X-RateLimit-Remaining": String(rateLimitResult.remaining),
+            "X-RateLimit-Reset": String(rateLimitResult.reset),
+          },
+        },
+      );
+    }
+
     const body = await request.json().catch(() => null);
 
     if (!body || typeof body.url !== "string" || !body.url.trim()) {
@@ -31,15 +58,27 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const response = await fetch(normalizedUrl, {
-      method: "GET",
-      headers: {
-        "User-Agent":
-          "EligibilityIngestorBot/1.0 (+https://pdf-parser-git-main-macleanlukes-projects.vercel.app/)",
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    // SSRF protection - validate URL
+    const validation = isAllowedUrl(normalizedUrl);
+    if (!validation.allowed) {
+      return NextResponse.json(
+        { error: validation.error || "URL not allowed" },
+        { status: 400 },
+      );
+    }
+
+    const response = await fetchWithTimeout(
+      normalizedUrl,
+      {
+        method: "GET",
+        headers: {
+          "User-Agent": "EligibilityBot/1.0",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
       },
-    });
+      10000, // 10 second timeout
+    );
 
     if (!response.ok) {
       return NextResponse.json(
@@ -130,6 +169,15 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("Failed to parse eligibility from URL", error);
+
+    // Handle timeout specifically
+    if (error instanceof Error && error.message.includes("timeout")) {
+      return NextResponse.json(
+        { error: "Request timeout - server took too long to respond." },
+        { status: 504 },
+      );
+    }
+
     return NextResponse.json(
       { error: "Failed to analyze the provided URL. Please try again." },
       { status: 500 },

@@ -31,7 +31,10 @@ const pool = connectionString
       max: 10,
       ssl:
         process.env.NODE_ENV === "production"
-          ? { rejectUnauthorized: false }
+          ? {
+              rejectUnauthorized: true,
+              ca: process.env.DATABASE_CA_CERT,
+            }
           : undefined,
     })
   : null;
