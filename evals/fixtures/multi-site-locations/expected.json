@@ -1,0 +1,26 @@
+{
+  "description": "Several service areas that must all be captured.",
+  "expected": {
+    "programName": "North Texas Housing Navigation",
+    "rawEligibilityText": "Navigation services are available to single adults and families experiencing homelessness in Dallas County, Collin County, and Rockwall County. Clients must provide a photo ID to enroll.",
+    "population": [
+      "single_adults",
+      "families"
+    ],
+    "genderRestriction": "any",
+    "requirements": [
+      "id_required"
+    ],
+    "locationConstraints": [
+      "Dallas County",
+      "Collin County",
+      "Rockwall County"
+    ],
+    "maxStayDays": null,
+    "ageRange": {
+      "min": null,
+      "max": null
+    },
+    "notes": ""
+  }
+}

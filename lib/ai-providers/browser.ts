@@ -25,7 +25,13 @@ export type BrowserAiProviderState =
 
 type CommunityFactory = ((options?: { model?: string }) => LanguageModelV1) | null;
 
-let cachedProvider: BrowserAiReadyProvider | null = null;
+/**
+ * Keyed on the `window.ai` object rather than held as a single module-level
+ * instance. A plain singleton captured whichever `ai` existed on the first call
+ * and never released it, so a provider built before the user granted permission
+ * kept serving a dead session afterwards.
+ */
+const providerCache = new WeakMap<object, BrowserAiReadyProvider>();
 let communityFactory: CommunityFactory | undefined;
 
 export async function createBrowserAiProvider(): Promise<BrowserAiProviderState> {
@@ -100,11 +106,12 @@ export async function createBrowserAiProvider(): Promise<BrowserAiProviderState>
 }
 
 function getOrCreateProvider(ai: NonNullable<typeof window.ai>) {
-  if (cachedProvider) {
-    return cachedProvider;
+  const cached = providerCache.get(ai);
+  if (cached) {
+    return cached;
   }
 
-  cachedProvider = {
+  const provider: BrowserAiReadyProvider = {
     async generateObject<T>({ schema, messages }: BrowserGenerateObjectOptions<T>) {
       const viaCommunity = await tryCommunityGenerate({ schema, messages });
       if (viaCommunity) {
@@ -124,7 +131,8 @@ function getOrCreateProvider(ai: NonNullable<typeof window.ai>) {
     },
   };
 
-  return cachedProvider;
+  providerCache.set(ai, provider);
+  return provider;
 }
 
 async function tryCommunityGenerate<T>({

@@ -68,8 +68,38 @@ npm run db:migrate
 npm run dev
 ```
 
-`npm test` runs the hook tests. Deployment notes are in
-[`DEPLOYMENT.md`](DEPLOYMENT.md).
+`npm test` runs the unit and scorer tests offline — no API key needed.
+Deployment notes are in [`DEPLOYMENT.md`](DEPLOYMENT.md).
+
+## Measuring extraction quality
+
+Getting a model to return structured JSON is easy. Knowing whether that JSON is
+*correct* is the actual problem, so extraction is scored against hand-labeled
+documents.
+
+```bash
+npm run eval                     # score the extractor against every fixture
+npm run eval -- --threshold=0.9  # exit non-zero below 90%
+```
+
+Two decisions worth stating: **the scorer is deterministic** — no model grades
+another model, because an LLM judge introduces exactly the variance the harness
+exists to measure. And **the scorer has its own unit tests**, so a green eval
+means the extractor improved rather than the scoring drifting.
+
+Grounding is scored separately from field accuracy: the model must quote the
+passage stating eligibility *verbatim from the source*, and on a document that
+states no eligibility rules the only correct answer is no quote at all. A run can
+get every structured field right and still fail that check — which is the case
+worth catching.
+
+That control case earned its keep immediately. It exposed that
+`rawEligibilityText` was declared `z.string().min(1)`, meaning a document with no
+eligibility rules had **no valid answer** and the model was structurally forced to
+fabricate a quote to satisfy the schema.
+
+See [`evals/README.md`](evals/README.md) for the scoring rules and the full
+fixture set.
 
 ## Layout
 
@@ -79,6 +109,7 @@ app/records/      browse and inspect stored services
 components/       search bar, result cards, UI primitives
 db/schema.ts      the eligibility_documents table
 drizzle/          migrations
+evals/            labeled fixtures, deterministic scorer, runner
 docs/             brand guide, Chrome AI notes, search spec
 ```
 

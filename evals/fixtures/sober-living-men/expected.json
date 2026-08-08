@@ -1,0 +1,23 @@
+{
+  "description": "Multiple stacked requirements including a background check.",
+  "expected": {
+    "programName": "Northgate Sober Living",
+    "rawEligibilityText": "Residents must be men age 18 or older, must have completed a detox or inpatient treatment program, must remain sober, and must pass a criminal background check. Residents must show a government-issued ID.",
+    "population": [
+      "single_adults"
+    ],
+    "genderRestriction": "men_only",
+    "requirements": [
+      "sober",
+      "background_check",
+      "id_required"
+    ],
+    "locationConstraints": [],
+    "maxStayDays": null,
+    "ageRange": {
+      "min": 18,
+      "max": null
+    },
+    "notes": ""
+  }
+}

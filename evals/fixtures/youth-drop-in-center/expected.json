@@ -1,0 +1,19 @@
+{
+  "description": "Explicit age band that must map to ageRange rather than population alone.",
+  "expected": {
+    "programName": "Crossroads Youth Drop-In Center",
+    "rawEligibilityText": "Services are available to unaccompanied young people ages 16 to 24. No identification is required and there is no cost to participate.",
+    "population": [
+      "youth"
+    ],
+    "genderRestriction": "any",
+    "requirements": [],
+    "locationConstraints": [],
+    "maxStayDays": null,
+    "ageRange": {
+      "min": 16,
+      "max": 24
+    },
+    "notes": ""
+  }
+}

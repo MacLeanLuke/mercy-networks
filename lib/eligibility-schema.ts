@@ -32,7 +32,11 @@ export const eligibilitySchema = z.object({
     .union([z.string().trim().min(1), z.null()])
     .transform((value) => (value === null ? null : value.trim()))
     .default(null),
-  rawEligibilityText: z.string().min(1, "rawEligibilityText must include text"),
+  // Intentionally allows "". Requiring text here meant a document stating no
+  // eligibility rules (an annual report, a donor letter) had no valid answer, so
+  // the model had to invent a quote to satisfy the schema. Surfaced by
+  // evals/fixtures/no-eligibility-stated.
+  rawEligibilityText: z.string().default(""),
   population: z.array(z.enum(populationOptions)).default([]),
   genderRestriction: z
     .enum(genderRestrictions)
@@ -56,4 +60,4 @@ export const eligibilitySchema = z.object({
 
 export type Eligibility = z.infer<typeof eligibilitySchema>;
 
-export const eligibilitySystemPrompt = `You are an expert case manager who extracts structured eligibility rules from materials describing homeless-services and housing programs. Inputs may include PDF documents or website pages. Use only information explicitly stated in the provided content. If any field is not mentioned, return null for single values or [] for arrays. For genderRestriction, use "any" when no restriction is stated. Do not infer beyond the text. Provide the exact excerpt that states eligibility in rawEligibilityText.`;
+export const eligibilitySystemPrompt = `You are an expert case manager who extracts structured eligibility rules from materials describing homeless-services and housing programs. Inputs may include PDF documents or website pages. Use only information explicitly stated in the provided content. If any field is not mentioned, return null for single values or [] for arrays. For genderRestriction, use "any" when no restriction is stated. Do not infer beyond the text. Provide the exact excerpt that states eligibility in rawEligibilityText, copied verbatim from the input. If the content states no eligibility rules at all, return an empty string for rawEligibilityText rather than quoting unrelated text — an empty answer is correct and strongly preferred over an invented one.`;

@@ -1,0 +1,25 @@
+{
+  "description": "Requires a minor child; two named service areas.",
+  "expected": {
+    "programName": "Family Promise of North Texas \u2014 Emergency Shelter",
+    "rawEligibilityText": "Our emergency shelter serves families with at least one minor child in custody. Families must be residents of Denton County or Tarrant County. Stays are limited to 60 days.",
+    "population": [
+      "families"
+    ],
+    "genderRestriction": "any",
+    "requirements": [
+      "must_have_child",
+      "must_be_resident"
+    ],
+    "locationConstraints": [
+      "Denton County",
+      "Tarrant County"
+    ],
+    "maxStayDays": 60,
+    "ageRange": {
+      "min": null,
+      "max": null
+    },
+    "notes": ""
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "description": "Hard gender restriction plus families; distinguishes a hard residency rule from soft priority.",
+  "expected": {
+    "programName": "Hope House Women's Shelter",
+    "rawEligibilityText": "Hope House serves women and women with accompanying children. Guests must present a valid photo ID at intake and must be residents of Collin County. Maximum length of stay is 90 days.",
+    "population": [
+      "single_adults",
+      "families"
+    ],
+    "genderRestriction": "women_only",
+    "requirements": [
+      "id_required",
+      "must_be_resident"
+    ],
+    "locationConstraints": [
+      "Collin County"
+    ],
+    "maxStayDays": 90,
+    "ageRange": {
+      "min": null,
+      "max": null
+    },
+    "notes": ""
+  }
+}

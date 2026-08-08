@@ -1,0 +1,17 @@
+{
+  "description": "Control case: a document with no eligibility rules at all. Any extracted requirement is a hallucination.",
+  "expected": {
+    "programName": "Riverside Community Kitchen",
+    "rawEligibilityText": "",
+    "population": [],
+    "genderRestriction": "any",
+    "requirements": [],
+    "locationConstraints": [],
+    "maxStayDays": null,
+    "ageRange": {
+      "min": null,
+      "max": null
+    },
+    "notes": ""
+  }
+}

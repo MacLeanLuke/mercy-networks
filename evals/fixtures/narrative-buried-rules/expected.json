@@ -1,0 +1,21 @@
+{
+  "description": "Rules stated in prose rather than a labeled section \u2014 tests recall over formatting cues.",
+  "expected": {
+    "programName": "Bridgeway",
+    "rawEligibilityText": "she was a woman over the age of eighteen, and like everyone she agreed to remain sober for the duration of her stay",
+    "population": [
+      "single_adults"
+    ],
+    "genderRestriction": "women_only",
+    "requirements": [
+      "sober"
+    ],
+    "locationConstraints": [],
+    "maxStayDays": 180,
+    "ageRange": {
+      "min": 18,
+      "max": null
+    },
+    "notes": ""
+  }
+}

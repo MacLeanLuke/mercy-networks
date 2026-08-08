@@ -1,0 +1,22 @@
+{
+  "description": "Veteran status and sobriety as hard requirements, with a long max stay.",
+  "expected": {
+    "programName": "Valor Transitional Housing Program",
+    "rawEligibilityText": "Applicants must have served in the United States Armed Forces and be able to provide a DD-214. Residents must maintain sobriety throughout their stay. Participation is limited to 24 months.",
+    "population": [
+      "veterans"
+    ],
+    "genderRestriction": "any",
+    "requirements": [
+      "must_be_veteran",
+      "sober"
+    ],
+    "locationConstraints": [],
+    "maxStayDays": 730,
+    "ageRange": {
+      "min": null,
+      "max": null
+    },
+    "notes": ""
+  }
+}

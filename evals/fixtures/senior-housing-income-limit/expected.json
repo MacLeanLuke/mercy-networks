@@ -1,0 +1,22 @@
+{
+  "description": "Income cap plus an open-ended minimum age.",
+  "expected": {
+    "programName": "Silver Oaks Senior Residences",
+    "rawEligibilityText": "Applicants must be 62 years of age or older. Household income must not exceed 50% of the area median income. Applicants must provide photo identification and income documentation.",
+    "population": [
+      "seniors"
+    ],
+    "genderRestriction": "any",
+    "requirements": [
+      "income_limit",
+      "id_required"
+    ],
+    "locationConstraints": [],
+    "maxStayDays": null,
+    "ageRange": {
+      "min": 62,
+      "max": null
+    },
+    "notes": ""
+  }
+}
