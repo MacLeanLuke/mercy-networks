@@ -1,0 +1,30 @@
+name: CI
+
+# Runs the offline test suite only.
+#
+# `npm run eval` is deliberately NOT run here. It calls a real model against the
+# labeled fixtures, which needs an API key and costs money on every push. The
+# scorer's own tests are pure and offline, so they are the right thing to gate
+# on — and they are what catches the scoring drifting out from under the eval.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Unit and scorer tests
+        run: npm test
