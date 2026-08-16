@@ -76,9 +76,91 @@
           "type": "varchar(128)",
           "primaryKey": false,
           "notNull": false
+        },
+        "source_type": {
+          "name": "source_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pdf'::text"
+        },
+        "source_url": {
+          "name": "source_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "page_title": {
+          "name": "page_title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "location_city": {
+          "name": "location_city",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "location_county": {
+          "name": "location_county",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "location_state": {
+          "name": "location_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "search_text": {
+          "name": "search_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''::text"
+        },
+        "search_tsv": {
+          "name": "search_tsv",
+          "type": "tsvector",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": "to_tsvector('english'::regconfig, search_text)"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "eligibility_documents_search_tsv_idx": {
+          "name": "eligibility_documents_search_tsv_idx",
+          "columns": ["search_tsv"],
+          "isUnique": false,
+          "using": "gin"
+        },
+        "eligibility_documents_search_trgm_idx": {
+          "name": "eligibility_documents_search_trgm_idx",
+          "columns": ["search_text"],
+          "isUnique": false,
+          "using": "gin"
+        },
+        "eligibility_documents_city_idx": {
+          "name": "eligibility_documents_city_idx",
+          "columns": ["location_city"],
+          "isUnique": false,
+          "using": null
+        },
+        "eligibility_documents_county_idx": {
+          "name": "eligibility_documents_county_idx",
+          "columns": ["location_county"],
+          "isUnique": false,
+          "using": null
+        },
+        "eligibility_documents_state_idx": {
+          "name": "eligibility_documents_state_idx",
+          "columns": ["location_state"],
+          "isUnique": false,
+          "using": null
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},

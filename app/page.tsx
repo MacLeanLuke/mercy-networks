@@ -20,7 +20,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import EligibilityResult from "@/components/eligibility-result";
-import type { SearchFilter } from "@/lib/search-filter";
 import type { Eligibility } from "@/lib/eligibility-schema";
 import { useBuiltInAiInterpreter } from "@/app/hooks/useBuiltInAiInterpreter";
 import { tryExtractEligibilityInBrowser } from "@/lib/eligibility-extractor.browser";
@@ -33,12 +32,32 @@ type ServiceSummary = {
   pageTitle: string | null;
   createdAt: string | null;
   previewEligibilityText: string;
+  locationCity: string | null;
+  locationCounty: string | null;
+  locationState: string | null;
+  populations: string[];
+  needTypes: string[];
+};
+
+type SearchResultItem = {
+  service: ServiceSummary;
+  matchReason: string[];
+  matchTier: "direct" | "broader" | "fuzzy";
+};
+
+type InterpretedFilters = {
+  query: string;
+  locationCity: string | null;
+  locationCounty: string | null;
+  state: string | null;
+  populations: string[];
+  needTypes: string[];
 };
 
 type SearchResponse = {
   query: string;
-  filters: SearchFilter;
-  results: ServiceSummary[];
+  interpretedFilters: InterpretedFilters;
+  results: SearchResultItem[];
 };
 
 type EligibilityRecordDetail = {
@@ -51,6 +70,9 @@ type EligibilityRecordDetail = {
   rawTextSnippet: string;
   eligibility: Eligibility;
   createdAt: string;
+  locationCity: string | null;
+  locationCounty: string | null;
+  locationState: string | null;
 };
 
 type WebResult = {
@@ -65,7 +87,7 @@ type SearchStatus = "idle" | "loading" | "success" | "error";
 
 type IngestPayload = {
   record: EligibilityRecordDetail;
-  summary: ServiceSummary;
+  result: SearchResultItem;
 };
 
 const BROWSER_EXTRACTION_ENABLED =
@@ -75,8 +97,9 @@ const MAX_BROWSER_HTML_LENGTH = 20_000;
 export default function Home() {
   const [query, setQuery] = useState("");
   const [searchStatus, setSearchStatus] = useState<SearchStatus>("idle");
-  const [services, setServices] = useState<ServiceSummary[]>([]);
-  const [searchFilters, setSearchFilters] = useState<SearchFilter | null>(null);
+  const [results, setResults] = useState<SearchResultItem[]>([]);
+  const [searchFilters, setSearchFilters] =
+    useState<InterpretedFilters | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [selectedRecord, setSelectedRecord] =
     useState<EligibilityRecordDetail | null>(null);
@@ -112,11 +135,11 @@ export default function Home() {
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
 
-  const [filterDraft, setFilterDraft] = useState<SearchFilter | null>(null);
+  const [filterDraft, setFilterDraft] = useState<InterpretedFilters | null>(null);
   const builtInInterpreter = useBuiltInAiInterpreter();
 
   const hasSearched = searchStatus !== "idle";
-  const noServices = searchStatus === "success" && services.length === 0;
+  const noServices = searchStatus === "success" && results.length === 0;
 
   const handleQueryChange = (value: string) => {
     setQuery(value);
@@ -128,7 +151,7 @@ export default function Home() {
 
   const executeSearch = async (
     input: string,
-    filtersOverride?: SearchFilter,
+    filtersOverride?: InterpretedFilters,
   ) => {
     const trimmed = input.trim();
     if (!trimmed) {
@@ -143,18 +166,15 @@ export default function Home() {
     setHighlightedServiceId(null);
 
     try {
-      let derivedFilters = filtersOverride;
-      if (!derivedFilters) {
-        derivedFilters = await builtInInterpreter.interpret(trimmed);
-      }
-
       const response = await fetch("/api/search-eligibility", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query: trimmed,
           limit: 20,
-          filtersOverride: derivedFilters,
+          filters: filtersOverride
+            ? formatFiltersForRequest(filtersOverride)
+            : undefined,
         }),
       });
 
@@ -164,8 +184,8 @@ export default function Home() {
       }
 
       const payload = (await response.json()) as SearchResponse;
-      setServices(payload.results);
-      setSearchFilters(payload.filters);
+      setResults(payload.results);
+      setSearchFilters(payload.interpretedFilters);
       setSearchStatus("success");
       setSelectedRecord(null);
       setWebResults([]);
@@ -344,6 +364,9 @@ export default function Home() {
           rawTextSnippet: eligibility.rawEligibilityText,
           eligibility,
           createdAt: new Date().toISOString(),
+          locationCity: null,
+          locationCounty: null,
+          locationState: null,
         };
 
         const summary: ServiceSummary = {
@@ -354,6 +377,11 @@ export default function Home() {
           pageTitle: record.pageTitle,
           createdAt: record.createdAt,
           previewEligibilityText: snippet(record.rawEligibilityText, 220),
+          locationCity: null,
+          locationCounty: null,
+          locationState: null,
+          populations: eligibility.population ?? [],
+          needTypes: eligibility.requirements ?? [],
         };
 
         if (options?.preview) {
@@ -365,9 +393,16 @@ export default function Home() {
           return { record, summary };
         }
 
-        setServices((prev) => {
-          const filtered = prev.filter((service) => service.id !== summary.id);
-          return [summary, ...filtered];
+        setResults((prev) => {
+          const filtered = prev.filter(
+            (result) => result.service.id !== summary.id,
+          );
+          const nextResult: SearchResultItem = {
+            service: summary,
+            matchReason: ["Added from browser"],
+            matchTier: "direct",
+          };
+          return [nextResult, ...filtered];
         });
         setHighlightedServiceId(summary.id);
         setSelectedRecord(record);
@@ -394,22 +429,25 @@ export default function Home() {
       setScanRecord,
       setSearchStatus,
       setSelectedRecord,
-      setServices,
+      setResults,
     ],
   );
 
-  const handleFiltersChange = (nextFilters: SearchFilter) => {
-    void executeSearch(nextFilters.textQuery || query, nextFilters);
+  const handleFiltersChange = (nextFilters: InterpretedFilters) => {
+    const baseQuery = nextFilters.query?.trim() || query;
+    setQuery(baseQuery);
+    setSearchFilters(nextFilters);
+    void executeSearch(baseQuery, nextFilters);
   };
 
   const handleBroadenSearch = () => {
     if (!searchFilters) return;
-    const next: SearchFilter = {
+    const next: InterpretedFilters = {
       ...searchFilters,
+      locationCity: null,
+      locationCounty: null,
       populations: [],
-      locations: [],
-      requirementsInclude: [],
-      genderRestriction: null,
+      needTypes: [],
     };
     handleFiltersChange(next);
   };
@@ -450,20 +488,27 @@ export default function Home() {
     }
 
     const payload = await response.json();
-    const { record, summary } = normalizeIngestPayload(payload);
+    const { record, result } = normalizeIngestPayload(payload);
+    const webResult: SearchResultItem = {
+      ...result,
+      matchReason: ["Saved from website"],
+    };
+    const summary = webResult.service;
 
     const matchesPlaceholder =
       localIngestPlaceholder &&
       urlsMatch(localIngestPlaceholder.url, summary.sourceUrl ?? url);
 
-    setServices((prev) => {
+    setResults((prev) => {
       const withoutPlaceholder = matchesPlaceholder
-        ? prev.filter((service) => service.id !== localIngestPlaceholder!.id)
+        ? prev.filter(
+            (item) => item.service.id !== localIngestPlaceholder!.id,
+          )
         : prev;
       const filtered = withoutPlaceholder.filter(
-        (service) => service.id !== summary.id,
+        (item) => item.service.id !== summary.id,
       );
-      return [summary, ...filtered];
+      return [webResult, ...filtered];
     });
     if (matchesPlaceholder) {
       setLocalIngestPlaceholder(null);
@@ -581,14 +626,20 @@ export default function Home() {
       }
 
       const payload = await response.json();
-      const { record, summary } = normalizeIngestPayload(payload);
+      const { record, result } = normalizeIngestPayload(payload);
+      const pdfResult: SearchResultItem = {
+        ...result,
+        matchReason: ["Saved from PDF upload"],
+      };
 
       setPdfFile(null);
-      setServices((prev) => {
-        const filtered = prev.filter((service) => service.id !== summary.id);
-        return [summary, ...filtered];
+      setResults((prev) => {
+        const filtered = prev.filter(
+          (item) => item.service.id !== pdfResult.service.id,
+        );
+        return [pdfResult, ...filtered];
       });
-      setHighlightedServiceId(summary.id);
+      setHighlightedServiceId(pdfResult.service.id);
       setSelectedRecord(record);
       setScanRecord(null);
     } catch (error) {
@@ -690,10 +741,13 @@ export default function Home() {
 
       {hasSearched && (
         <MatchingServicesList
-          services={services}
+          results={results}
           loadingRecordId={loadingRecordId}
           highlightedId={highlightedServiceId}
           onViewDetails={viewRecordDetails}
+          isLoading={searchStatus === "loading"}
+          showEmptyState={searchStatus === "success" && results.length === 0}
+          onBroaden={handleBroadenSearch}
         />
       )}
 
@@ -871,61 +925,64 @@ function SearchUnderstandingPanel({
   onEditRequest,
   isUpdating,
 }: {
-  filters: SearchFilter;
-  onFiltersChange: (filters: SearchFilter) => void;
+  filters: InterpretedFilters;
+  onFiltersChange: (filters: InterpretedFilters) => void;
   onBroaden: () => void;
   onEditRequest: () => void;
   isUpdating: boolean;
 }) {
+  const locationChips = (
+    [
+      { field: "locationCity" as const, label: filters.locationCity },
+      { field: "locationCounty" as const, label: filters.locationCounty },
+      {
+        field: "state" as const,
+        label: filters.state ? filters.state.toUpperCase() : null,
+      },
+    ] as const
+  ).filter((chip) => chip.label);
+
   const hasSpecificFilters =
+    locationChips.length > 0 ||
     filters.populations.length > 0 ||
-    filters.locations.length > 0 ||
-    filters.requirementsInclude.length > 0 ||
-    (filters.genderRestriction && filters.genderRestriction !== "any");
+    filters.needTypes.length > 0;
 
-  const removeChip = (
-    type:
-      | "locations"
-      | "populations"
-      | "requirementsInclude"
-      | "genderRestriction",
-    value: string | null,
+  const removeLocation = (
+    field: "locationCity" | "locationCounty" | "state",
   ) => {
-    if (type === "genderRestriction") {
-      onFiltersChange({
-        ...filters,
-        genderRestriction: null,
-      });
-      return;
-    }
-
-    const list = filters[type];
-    if (!Array.isArray(list)) return;
     onFiltersChange({
       ...filters,
-      [type]: list.filter((item: string) => item !== value),
+      [field]: null,
+    });
+  };
+
+  const removeValue = (field: "populations" | "needTypes", value: string) => {
+    onFiltersChange({
+      ...filters,
+      [field]: filters[field].filter((item) => item !== value),
     });
   };
 
   return (
     <Card>
       <CardHeader className="flex flex-wrap items-center justify-between gap-3">
-        <div>
+        <div className="space-y-1">
           <CardTitle className="text-lg font-semibold text-brand-heading">
             Here’s how we understood your search
           </CardTitle>
           <p className="text-sm text-brand-muted">
-            Adjust these chips to broaden or refine what you’re looking for.
+            Adjust any of these chips or open the editor to fine-tune what you’re
+            looking for.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="ghost"
             size="sm"
             onClick={onBroaden}
-            disabled={isUpdating}
+            disabled={isUpdating || !hasSpecificFilters}
           >
-            Clear extra filters
+            Broaden search
           </Button>
           <Button
             variant="outline"
@@ -935,70 +992,75 @@ function SearchUnderstandingPanel({
             className="gap-2"
           >
             <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-            Refine filters
+            Edit filters
           </Button>
         </div>
       </CardHeader>
-      <CardContent className="flex flex-wrap gap-2 text-sm">
-        {filters.textQuery && (
-          <Badge variant="default">Need: {filters.textQuery}</Badge>
-        )}
-        {filters.locations.map((location) => (
-          <FilterChip
-            key={location}
-            label={`Location: ${location}`}
-            onRemove={() => removeChip("locations", location)}
-          />
-        ))}
-        {filters.populations.map((population) => (
-          <FilterChip
-            key={population}
-            label={`Helps: ${population}`}
-            onRemove={() => removeChip("populations", population)}
-          />
-        ))}
-        {filters.requirementsInclude.map((requirement) => (
-          <FilterChip
-            key={requirement}
-            label={`Needs: ${requirement}`}
-            onRemove={() => removeChip("requirementsInclude", requirement)}
-          />
-        ))}
-        {filters.genderRestriction && filters.genderRestriction !== "any" && (
-          <FilterChip
-            label={`Gender focus: ${filters.genderRestriction.replace(/_/g, " ")}`}
-            onRemove={() => removeChip("genderRestriction", null)}
-          />
-        )}
-        {!hasSpecificFilters && (
-          <span className="text-sm text-brand-muted">
-            We didn’t pick out specific filters, so we’re showing the closest matches
-            to your words.
-          </span>
-        )}
+      <CardContent className="space-y-3">
+        <div className="inline-flex items-center gap-2 text-sm text-brand-muted">
+          <Badge variant="default" className="bg-brand-blue/10 text-brand-blue">
+            Query: {filters.query}
+          </Badge>
+          {isUpdating && (
+            <span className="inline-flex items-center gap-1 text-xs">
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+              Updating…
+            </span>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {locationChips.map((chip) => (
+            <RemovableChip
+              key={`${chip.field}-${chip.label}`}
+              label={`Location: ${chip.label}`}
+              onRemove={() => removeLocation(chip.field)}
+            />
+          ))}
+          {filters.populations.map((population) => (
+            <RemovableChip
+              key={`population-${population}`}
+              label={`Helps: ${humanizeTag(population)}`}
+              onRemove={() => removeValue("populations", population)}
+            />
+          ))}
+          {filters.needTypes.map((need) => (
+            <RemovableChip
+              key={`need-${need}`}
+              label={`Need: ${need}`}
+              onRemove={() => removeValue("needTypes", need)}
+            />
+          ))}
+          {!hasSpecificFilters && (
+            <span className="text-sm text-brand-muted">
+              We didn’t spot extra filters, so we’re leaning on the full-text match.
+            </span>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
 }
 
-function FilterChip({
+function RemovableChip({
   label,
   onRemove,
 }: {
   label: string;
-  onRemove: () => void;
+  onRemove?: () => void;
 }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-brand-background px-3 py-1 text-xs font-medium text-brand-heading">
+    <span className="inline-flex items-center gap-1 rounded-full border border-brand-border bg-white px-3 py-1 text-xs font-medium text-brand-heading shadow-sm">
       {label}
-      <button
-        type="button"
-        onClick={onRemove}
-        className="text-brand-muted transition hover:text-brand-heading"
-        aria-label={`Remove ${label}`}
-      >
-        <X className="h-3 w-3" aria-hidden="true" />
-      </button>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={onRemove}
+          className="text-brand-muted transition hover:text-brand-heading"
+          aria-label={`Remove ${label}`}
+        >
+          <X className="h-3 w-3" aria-hidden="true" />
+        </button>
+      )}
     </span>
   );
 }
@@ -1009,12 +1071,12 @@ function FilterEditor({
   onApply,
   onCancel,
 }: {
-  draft: SearchFilter;
-  onChange: (filters: SearchFilter) => void;
+  draft: InterpretedFilters;
+  onChange: (filters: InterpretedFilters) => void;
   onApply: () => void;
   onCancel: () => void;
 }) {
-  const update = (patch: Partial<SearchFilter>) => {
+  const update = (patch: Partial<InterpretedFilters>) => {
     onChange({
       ...draft,
       ...patch,
@@ -1028,20 +1090,36 @@ function FilterEditor({
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="grid gap-4 md:grid-cols-2">
-          <LabeledField label="Need / keywords">
+          <LabeledField label="Search phrase">
             <Input
-              value={draft.textQuery}
-              onChange={(event) => update({ textQuery: event.target.value })}
-              placeholder="Emergency shelter, day center, housing voucher"
+              value={draft.query}
+              onChange={(event) => update({ query: event.target.value })}
+              placeholder="Emergency shelter tonight"
             />
           </LabeledField>
-          <LabeledField label="Locations">
+          <LabeledField label="City">
             <Input
-              value={draft.locations.join(", ")}
+              value={draft.locationCity ?? ""}
               onChange={(event) =>
-                update({ locations: splitList(event.target.value) })
+                update({ locationCity: event.target.value || null })
               }
-              placeholder="Plano, Dallas County, North Texas"
+              placeholder="Plano"
+            />
+          </LabeledField>
+          <LabeledField label="County">
+            <Input
+              value={draft.locationCounty ?? ""}
+              onChange={(event) =>
+                update({ locationCounty: event.target.value || null })
+              }
+              placeholder="Dallas County"
+            />
+          </LabeledField>
+          <LabeledField label="State">
+            <Input
+              value={draft.state ?? ""}
+              onChange={(event) => update({ state: event.target.value || null })}
+              placeholder="TX"
             />
           </LabeledField>
           <LabeledField label="Populations">
@@ -1050,35 +1128,17 @@ function FilterEditor({
               onChange={(event) =>
                 update({ populations: splitList(event.target.value) })
               }
-              placeholder="families, single adults, veterans"
+              placeholder="youth, families, veterans"
             />
           </LabeledField>
-          <LabeledField label="Requirements or notes">
+          <LabeledField label="Needs">
             <Input
-              value={draft.requirementsInclude.join(", ")}
+              value={draft.needTypes.join(", ")}
               onChange={(event) =>
-                update({ requirementsInclude: splitList(event.target.value) })
+                update({ needTypes: splitList(event.target.value) })
               }
-              placeholder="ID required, sober, background check"
+              placeholder="shelter, bed tonight, rapid rehousing"
             />
-          </LabeledField>
-          <LabeledField label="Gender focus">
-            <select
-              className="w-full rounded-xl border border-brand-border bg-white px-3 py-2 text-sm"
-              value={draft.genderRestriction ?? "any"}
-              onChange={(event) =>
-                update({
-                  genderRestriction:
-                    event.target.value === "any" ? null : event.target.value,
-                })
-              }
-            >
-              <option value="any">Any / not specified</option>
-              <option value="women_only">Women only</option>
-              <option value="men_only">Men only</option>
-              <option value="non_male">People who are not male</option>
-              <option value="non_female">People who are not female</option>
-            </select>
           </LabeledField>
         </div>
         <div className="flex justify-end gap-2">
@@ -1112,100 +1172,257 @@ function LabeledField({
   );
 }
 
+const MATCH_TIER_GROUPS: Array<{
+  tier: "direct" | "broader" | "fuzzy";
+  title: string;
+  description: string;
+}> = [
+  {
+    tier: "direct",
+    title: "Best matches",
+    description: "Strong text and filter matches for your search.",
+  },
+  {
+    tier: "broader",
+    title: "Other options near you",
+    description: "Still relevant, but with looser filters or nearby regions.",
+  },
+  {
+    tier: "fuzzy",
+    title: "Broader / fuzzy matches",
+    description: "Services with similar wording when nothing else is close.",
+  },
+];
+
 function MatchingServicesList({
-  services,
+  results,
   loadingRecordId,
   highlightedId,
   onViewDetails,
+  isLoading,
+  showEmptyState,
+  onBroaden,
 }: {
-  services: ServiceSummary[];
+  results: SearchResultItem[];
   loadingRecordId: string | null;
   highlightedId: string | null;
   onViewDetails: (id: string) => void;
+  isLoading: boolean;
+  showEmptyState: boolean;
+  onBroaden: () => void;
 }) {
+  const groups = MATCH_TIER_GROUPS.map((group) => ({
+    ...group,
+    items: results.filter((result) => result.matchTier === group.tier),
+  })).filter((group) => group.items.length > 0);
+
   return (
     <Card>
       <CardHeader className="flex items-center justify-between">
-        <CardTitle className="text-lg text-brand-heading">
-          Services that may fit
-        </CardTitle>
-        <p className="text-sm text-brand-muted">
-          Saved by your team across PDFs and websites
-        </p>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        {services.length === 0 && (
+        <div>
+          <CardTitle className="text-lg text-brand-heading">
+            Matching services from your library
+          </CardTitle>
           <p className="text-sm text-brand-muted">
-            We don’t see a matching service yet. Use the web explorer below or add a
-            PDF to keep growing this list.
+            We surface the fastest database matches first. Web results and other
+            ideas stay available below.
           </p>
+        </div>
+        {isLoading && (
+          <span className="inline-flex items-center gap-2 text-xs text-brand-muted">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            Refreshing…
+          </span>
         )}
-        {services.map((service) => (
-          <div
-            key={service.id}
-            className={`rounded-2xl border bg-white p-4 shadow-sm ${service.id === highlightedId ? "border-brand-green" : "border-brand-border"}`}
-          >
-            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-              <div className="space-y-1">
-                <p className="text-base font-semibold text-brand-heading">
-                  {service.programName || service.pageTitle || "Service name coming soon"}
-                </p>
-                <div className="flex flex-wrap items-center gap-2 text-xs text-brand-muted">
-                  <Badge variant="default">
-                    {service.sourceType === "pdf" ? (
-                      <FileText className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
-                    ) : (
-                      <Globe className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
-                    )}
-                    {service.sourceType === "pdf" ? "Added from PDF" : "Added from website"}
-                  </Badge>
-                  {service.sourceUrl && (
-                    <a
-                      href={service.sourceUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-brand-blue underline decoration-dotted underline-offset-4 hover:text-brand-heading"
-                    >
-                      Open source page
-                    </a>
-                  )}
-                  {service.createdAt && (
-                    <span>
-                      Updated {new Date(service.createdAt).toLocaleDateString()}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-2 md:mt-0"
-                onClick={() => onViewDetails(service.id)}
-                disabled={loadingRecordId === service.id}
-              >
-                {loadingRecordId === service.id ? (
-                  <>
-                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                    Loading…
-                  </>
-                ) : (
-                  <>
-                    See service details
-                    <ArrowRight className="ml-1 h-3 w-3" aria-hidden="true" />
-                  </>
-                )}
-              </Button>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {isLoading && <ResultSkeleton />}
+        {groups.map((group) => (
+          <div key={group.tier} className="space-y-3">
+            <div>
+              <h3 className="text-base font-semibold text-brand-heading">
+                {group.title}
+              </h3>
+              <p className="text-xs text-brand-muted">{group.description}</p>
             </div>
-            <p className="mt-3 line-clamp-3 text-sm text-brand-muted">
-              {service.previewEligibilityText.trim().length
-                ? service.previewEligibilityText
-                : "We’re still gathering details for this service."}
-            </p>
+            <div className="space-y-3">
+              {group.items.map((item) => (
+                <ResultCard
+                  key={item.service.id}
+                  result={item}
+                  highlighted={item.service.id === highlightedId}
+                  loading={loadingRecordId === item.service.id}
+                  onViewDetails={() => onViewDetails(item.service.id)}
+                />
+              ))}
+            </div>
           </div>
         ))}
+
+        {showEmptyState && !isLoading && (
+          <div className="rounded-2xl border border-dashed border-brand-border bg-brand-background p-6 text-sm text-brand-muted">
+            <p className="font-medium text-brand-heading">
+              We didn’t find a service that fits this search yet.
+            </p>
+            <ul className="mt-3 list-disc space-y-2 pl-5">
+              <li>
+                <button
+                  type="button"
+                  onClick={onBroaden}
+                  className="text-brand-blue underline decoration-dotted underline-offset-4 hover:text-brand-heading"
+                >
+                  Broaden the search filters
+                </button>{" "}
+                to include nearby or more flexible options.
+              </li>
+              <li>Check the Web Explorer below for fresh results.</li>
+              <li>Add a new program from a website or PDF to teach Mercy Networks.</li>
+            </ul>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
+}
+
+function ResultCard({
+  result,
+  highlighted,
+  loading,
+  onViewDetails,
+}: {
+  result: SearchResultItem;
+  highlighted: boolean;
+  loading: boolean;
+  onViewDetails: () => void;
+}) {
+  const { service, matchReason, matchTier } = result;
+  const location = formatLocation(service);
+  const sourceLabel =
+    service.sourceType === "pdf" ? "Added from PDF" : "Added from website";
+
+  return (
+    <div
+      className={`rounded-2xl border bg-white p-5 shadow-sm transition ${highlighted ? "border-brand-green shadow-md" : "border-brand-border"}`}
+    >
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2 text-xs text-brand-muted">
+            <Badge variant="default">
+              {service.sourceType === "pdf" ? (
+                <FileText className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+              ) : (
+                <Globe className="mr-1 h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              {sourceLabel}
+            </Badge>
+            <Badge variant="slate" className="uppercase tracking-wide">
+              {matchTier === "direct"
+                ? "Best match"
+                : matchTier === "broader"
+                  ? "Broader match"
+                  : "Fuzzy match"}
+            </Badge>
+            {service.sourceUrl && (
+              <a
+                href={service.sourceUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-brand-blue underline decoration-dotted underline-offset-4 hover:text-brand-heading"
+              >
+                Open source
+              </a>
+            )}
+            {service.createdAt && (
+              <span>Updated {new Date(service.createdAt).toLocaleDateString()}</span>
+            )}
+          </div>
+          <h4 className="text-lg font-semibold text-brand-heading">
+            {service.programName || service.pageTitle || "Service name coming soon"}
+          </h4>
+          {location && <p className="text-sm text-brand-muted">{location}</p>}
+          {matchReason.length > 0 && (
+            <p className="text-xs text-brand-blue">
+              Match highlights: {matchReason.join(" · ")}
+            </p>
+          )}
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="self-start"
+          onClick={onViewDetails}
+          disabled={loading}
+        >
+          {loading ? (
+            <>
+              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              Loading…
+            </>
+          ) : (
+            <>
+              View details
+              <ArrowRight className="ml-1 h-3 w-3" aria-hidden="true" />
+            </>
+          )}
+        </Button>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {service.populations.length > 0 ? (
+          service.populations.map((population) => (
+            <Badge key={population} variant="slate">
+              {humanizeTag(population)}
+            </Badge>
+          ))
+        ) : (
+          <Badge variant="slate">Anyone welcome</Badge>
+        )}
+        {service.needTypes.map((need) => (
+          <Badge key={need} variant="slate">
+            Need: {need}
+          </Badge>
+        ))}
+      </div>
+      <p className="mt-4 line-clamp-3 text-sm text-brand-muted">
+        {service.previewEligibilityText.trim().length
+          ? service.previewEligibilityText
+          : "We’re still gathering details for this service."}
+      </p>
+    </div>
+  );
+}
+
+function ResultSkeleton() {
+  return (
+    <div className="space-y-3">
+      {Array.from({ length: 3 }).map((_, index) => (
+        <div
+          key={index}
+          className="animate-pulse rounded-2xl border border-brand-border bg-white p-5"
+        >
+          <div className="h-4 w-24 rounded-full bg-brand-border/60" />
+          <div className="mt-3 h-5 w-2/3 rounded-full bg-brand-border/60" />
+          <div className="mt-4 flex gap-2">
+            <span className="h-6 w-20 rounded-full bg-brand-border/40" />
+            <span className="h-6 w-24 rounded-full bg-brand-border/40" />
+          </div>
+          <div className="mt-4 h-4 w-full rounded-full bg-brand-border/40" />
+          <div className="mt-2 h-4 w-5/6 rounded-full bg-brand-border/40" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function formatLocation(service: ServiceSummary) {
+  const parts = [service.locationCity, service.locationCounty, service.locationState]
+    .map((part) => part?.toString().trim())
+    .filter((part) => part && part.length > 0) as string[];
+  return parts.join(", ");
+}
+
+function humanizeTag(value: string) {
+  return value.replace(/_/g, " ");
 }
 
 function WebSearchPanel({
@@ -1495,13 +1712,24 @@ function splitList(value: string) {
     .filter((item) => item.length > 0);
 }
 
-function cloneFilters(filters: SearchFilter): SearchFilter {
+function cloneFilters(filters: InterpretedFilters): InterpretedFilters {
   return {
-    textQuery: filters.textQuery,
+    query: filters.query,
+    locationCity: filters.locationCity,
+    locationCounty: filters.locationCounty,
+    state: filters.state,
     populations: [...filters.populations],
-    genderRestriction: filters.genderRestriction,
-    locations: [...filters.locations],
-    requirementsInclude: [...filters.requirementsInclude],
+    needTypes: [...filters.needTypes],
+  };
+}
+
+function formatFiltersForRequest(filters: InterpretedFilters) {
+  return {
+    locationCity: filters.locationCity ?? undefined,
+    locationCounty: filters.locationCounty ?? undefined,
+    state: filters.state ?? undefined,
+    populations: filters.populations,
+    needTypes: filters.needTypes,
   };
 }
 
@@ -1528,19 +1756,46 @@ function normalizeIngestPayload(payload: any): IngestPayload {
         : base.createdAt
             ? new Date(base.createdAt).toISOString()
             : new Date().toISOString(),
+    locationCity: base.locationCity ?? null,
+    locationCounty: base.locationCounty ?? null,
+    locationState: base.locationState ?? null,
   };
 
-  const summary: ServiceSummary = payload?.service ?? {
-    id: record.id,
-    programName: record.programName,
-    sourceType: record.sourceType,
-    sourceUrl: record.sourceUrl,
-    pageTitle: record.pageTitle,
-    createdAt: record.createdAt,
-    previewEligibilityText: snippet(record.rawEligibilityText, 220),
+  const servicePayload = payload?.service ?? {};
+
+  const service: ServiceSummary = {
+    id: String(servicePayload.id ?? record.id),
+    programName: servicePayload.programName ?? record.programName,
+    sourceType:
+      servicePayload.sourceType === "web" || record.sourceType === "web"
+        ? "web"
+        : "pdf",
+    sourceUrl: servicePayload.sourceUrl ?? record.sourceUrl,
+    pageTitle: servicePayload.pageTitle ?? record.pageTitle,
+    createdAt: servicePayload.createdAt ?? record.createdAt,
+    previewEligibilityText:
+      servicePayload.previewEligibilityText ??
+      snippet(record.rawEligibilityText, 220),
+    locationCity: servicePayload.locationCity ?? record.locationCity ?? null,
+    locationCounty:
+      servicePayload.locationCounty ?? record.locationCounty ?? null,
+    locationState:
+      servicePayload.locationState ?? record.locationState ?? null,
+    populations: Array.isArray(servicePayload.populations)
+      ? servicePayload.populations
+      : eligibility.population ?? [],
+    needTypes: Array.isArray(servicePayload.needTypes)
+      ? servicePayload.needTypes
+      : eligibility.requirements ?? [],
   };
 
-  return { record, summary };
+  const result: SearchResultItem = {
+    service,
+    matchReason: ["Saved just now"],
+    matchTier: "direct",
+  };
+
+  return { record, result };
 }
 
 function urlsMatch(a: string, b: string) {

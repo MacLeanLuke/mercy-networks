@@ -39,6 +39,9 @@ export async function GET(
       rawEligibilityText: record.rawEligibilityText,
       rawTextSnippet: createSnippet(record.rawText, DETAIL_SNIPPET_LENGTH),
       eligibility: record.eligibilityJson,
+      locationCity: record.locationCity,
+      locationCounty: record.locationCounty,
+      locationState: record.locationState,
     });
   } catch (error) {
     console.error("Failed to load eligibility record", error);

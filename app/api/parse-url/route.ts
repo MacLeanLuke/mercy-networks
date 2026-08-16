@@ -3,6 +3,10 @@ import { load } from "cheerio";
 import { db } from "@/db";
 import { eligibilityDocuments } from "@/db/schema";
 import { extractEligibility } from "@/lib/eligibility-extractor";
+import {
+  buildSearchText,
+  deriveLocationFromEligibility,
+} from "@/lib/search-text";
 
 const MAX_PAGE_TEXT_LENGTH = 20_000;
 const RESPONSE_SNIPPET_LENGTH = 2_000;
@@ -85,6 +89,14 @@ export async function POST(request: NextRequest) {
     }
 
     const rawTextSnippet = createSnippet(text, RESPONSE_SNIPPET_LENGTH);
+    const location = deriveLocationFromEligibility(eligibility);
+    const searchText = buildSearchText({
+      programName: eligibility.programName,
+      pageTitle: title ?? null,
+      eligibility,
+      rawEligibilityText: eligibility.rawEligibilityText,
+      location,
+    });
 
     const [record] = await db
       .insert(eligibilityDocuments)
@@ -99,6 +111,10 @@ export async function POST(request: NextRequest) {
         sourceType: "web",
         sourceUrl: normalizedUrl.href,
         pageTitle: title,
+        locationCity: location.city,
+        locationCounty: location.county,
+        locationState: location.state,
+        searchText,
       })
       .returning();
 
@@ -119,9 +135,16 @@ export async function POST(request: NextRequest) {
       eligibility,
       createdAt,
       rawTextSnippet,
+      locationCity: record.locationCity,
+      locationCounty: record.locationCounty,
+      locationState: record.locationState,
     };
 
-    const service = createServiceSummary(detail);
+    const service = createServiceSummary({
+      ...detail,
+      populations: eligibility.population,
+      needTypes: eligibility.requirements,
+    });
 
     return NextResponse.json({
       ...detail,
@@ -203,6 +226,11 @@ function createServiceSummary(record: {
   pageTitle: string | null;
   createdAt: string | null;
   rawEligibilityText: string;
+  locationCity: string | null;
+  locationCounty: string | null;
+  locationState: string | null;
+  populations: string[];
+  needTypes: string[];
 }) {
   return {
     id: record.id,
@@ -212,5 +240,10 @@ function createServiceSummary(record: {
     pageTitle: record.pageTitle,
     createdAt: record.createdAt,
     previewEligibilityText: createSnippet(record.rawEligibilityText, 220),
+    locationCity: record.locationCity,
+    locationCounty: record.locationCounty,
+    locationState: record.locationState,
+    populations: record.populations,
+    needTypes: record.needTypes,
   };
 }
